@@ -5,20 +5,22 @@ from neon.data import NervanaDataIterator
 
 def temp_3Ddata():
 
-   f = h5py.File("/Users/svalleco/GAN/data/small_test.h5","r")
+   #f = h5py.File("/Users/svalleco/GAN/data/small_test.h5","r")
    #f = h5py.File("/Users/svalleco/GAN/data/Ele_v1_1_2.h5","r")
-   data = f.get('ECAL')
+   #data = f.get('ECAL')
    #dtag =f.get('TAG')
-   xtr = np.array(data)
+   #xtr = np.array(data)
+   xtr = np.random.rand(10000, 25, 25, 25)
    print (xtr.shape)
    #labels = np.ones(xtr.shape[0])
-   dtag =f.get('target')
-   temp = np.array(dtag[:,1])
-   print (temp.shape)
+   #dtag =f.get('target')
+   #temp = np.array(dtag[:,1])
+   #print (temp.shape)
    aa=np.reshape(xtr, (xtr.shape[0], 25*25*25))
    print (aa.shape)
    sumE = np.sum(aa, axis=(1)) 
-   labels=np.stack((np.array(dtag[:,1]),sumE),axis=1)
+   #labels=np.stack((np.array(dtag[:,1]),sumE),axis=1)
+   labels = np.ones((xtr.shape[0], 2))
    #xtr=xtr[...,numpy.newaxis]
    #xtr=numpy.rollaxis(xtr,4,1)
    print labels.shape
@@ -44,7 +46,7 @@ class EnergyData(NervanaDataIterator):
         self.nyfeatures =self.Y.shape[1] #Nchannels*W*H*D
         self.nbatches = int(self.ndata/self.be.bsz)
         self.dev_X = self.be.zeros((self.nfeatures, self.be.bsz))
-        self.dev_Y = self.be.zeros((self.nyfeatures, self.be.bsz))  # 3 targets: real/fake, primaryE, sumEcal
+        self.dev_Y = self.be.zeros((self.nyfeatures, self.be.bsz))  # 2 targets: primaryE, sumEcal
 
     def reset(self):
         self.start = 0

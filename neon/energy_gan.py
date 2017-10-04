@@ -5,7 +5,7 @@ from neon.callbacks.callbacks import Callbacks, GANCostCallback
 from neon.initializers import Gaussian, Constant
 from neon.layers import GeneralizedGANCost, Affine, Linear, Sequential, Conv, Deconv, Dropout, Pooling, BatchNorm, BranchNode, GeneralizedCost
 from neon.layers.layer import Linear, Reshape
-from neon.layers.container import Tree, Multicost, LayerContainer
+from neon.layers.container import Tree, Multicost, LayerContainer, GenerativeAdversarial
 from neon.models.model import Model
 from neon.transforms import Rectlin, Logistic, GANCost, Tanh, MeanSquared
 from neon.util.argparser import NeonArgparser
@@ -13,8 +13,10 @@ from neon.util.persist import ensure_dirs_exist
 from neon.layers.layer import Dropout
 from neon.data.hdf5iterator import HDF5Iterator
 from neon.optimizers import GradientDescentMomentum, RMSProp, Adam
+from neon.optimizers.optimizer import get_param_list
 from gen_data_norm import gen_rhs
 from neon.backends import gen_backend
+from neon.backends.backend import Block
 from energy_dataset import temp_3Ddata, EnergyData
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -26,7 +28,7 @@ import logging
 main_logger = logging.getLogger('neon')
 main_logger.setLevel(10)
 
-class myGenerativeAdversarial(LayerContainer):
+class myGenerativeAdversarial(GenerativeAdversarial): # LayerContainer):
     """
     Container for Generative Adversarial Net (GAN). It contains the Generator
     and Discriminator stacks as sequential containers.
@@ -130,7 +132,8 @@ class myGAN(Model):
             self.be.fill_normal(z)
         else:
             z[:] = 2 * self.be.rand() - 1.
-        z[:] = z[:]*(self.be.rand()*(maxE -minE)+minE)
+        #z[:] = z[:]*(self.be.rand()*(maxE -minE)+minE)
+        z[:] = z[:]*(np.random.rand()*(maxE -minE)+minE)
 
     def initialize(self, dataset, cost=None):
         """
@@ -191,7 +194,7 @@ class myGAN(Model):
         z, y_temp = self.zbuf, self.ybuf
 
         # iterate through minibatches of the dataset
-        for mb_idx, (x, _) in enumerate(dataset):
+        for mb_idx, (x, labels) in enumerate(dataset):
             callbacks.on_minibatch_begin(epoch, mb_idx)
             self.be.begin(Block.minibatch, mb_idx)
 
@@ -203,36 +206,48 @@ class myGAN(Model):
             # train discriminator on noise
             self.fill_noise_sampledE(z, normal=(self.noise_type == 'normal'))
             #z = self.z0
-            Gz = self.fprop_gen(z)
-            y_noise = self.fprop_dis(Gz)
+            Gz = self.fprop_gen(z) # Gz is a list qwith 1 element, being the generator defined as tree
+            y_noise_list = self.fprop_dis(Gz[0]) # this is due to the generator defined as tree
+            y_noise = y_noise_list[0] # getting the Real/Fake
             y_temp[:] = y_noise
-            delta_noise = self.cost.costfunc.bprop_noise(y_noise)
-            self.bprop_dis(delta_noise)
+            delta_noise = self.cost.costs[0].costfunc.bprop_noise(y_noise)
+            delta_nnn = self.bprop_dis((delta_noise,))
             self.layers.discriminator.set_acc_on(True)
 
-            # train discriminator on data
-            y_data = self.fprop_dis(x)
-            delta_data = self.cost.costfunc.bprop_data(y_data)
-            self.bprop_dis(delta_data)
+            # train discriminator on data: in this case the additional lines will be taken into account
+            y_data_list = self.fprop_dis(x)
+            y_data = y_data_list[0] # this is due to the generator defined as tree, but this time all
+            # the output lines are meaningful
+            y_data_Ep = y_data_list[1]
+            y_data_SUMEcal = y_data_list[2]
+            delta_data = self.cost.costs[0].costfunc.bprop_data(y_data)
+            delta_noise_Ep = self.cost.costs[1].costfunc.bprop(labels[0] ,y_data_Ep)
+            # delta_noise_SUMEcal = self.cost.costs[2].costfunc.bprop(y_data_SUMEcal)
+            delta_ddd = self.bprop_dis((delta_data,))
             self.optimizer.optimize(self.layers.discriminator.layers_to_optimize, epoch=epoch)
             self.layers.discriminator.set_acc_on(False)
 
             # keep GAN cost values for the current minibatch
             # abuses get_cost(y,t) using y_noise as the "target"
-            self.cost_dis[:] = self.cost.get_cost(y_data, y_temp, cost_type='dis')
+            self.cost_dis[:] = self.cost.costs[0].get_cost(y_data, y_temp, cost_type='dis')
+
+            #console feedback
+            #print(" \n minibatch index {}".format(mb_idx))
 
             # train generator
             if self.current_batch == self.last_gen_batch + self.get_k(self.gen_iter):
+                print(" ---> now training the generator {}-th time".format(self.gen_iter))
                 self.fill_noise_sampledE(z, normal=(self.noise_type == 'normal'))
                 Gz = self.fprop_gen(z)
+                y_noise_list = self.fprop_dis(Gz[0]) #y_noise = self.fprop_dis(Gz)
+                y_noise = y_noise_list[0]  # just getting the first cost for the moment
                 y_temp[:] = y_data
-                y_noise = self.fprop_dis(Gz)
                 delta_noise = self.cost.costfunc.bprop_generator(y_noise)
-                delta_dis = self.bprop_dis(delta_noise)
+                delta_dis = self.bprop_dis((delta_noise,))
                 self.bprop_gen(delta_dis)
                 self.optimizer.optimize(self.layers.generator.layers_to_optimize, epoch=epoch)
                 # keep GAN cost values for the current minibatch
-                self.cost_dis[:] = self.cost.get_cost(y_temp, y_noise, cost_type='dis')
+                self.cost_dis[:] = self.cost.costs[0].get_cost(y_temp, y_noise, cost_type='dis')
                 # accumulate total cost.
                 self.total_cost[:] = self.total_cost + self.cost_dis
                 self.last_gen_batch = self.current_batch
@@ -292,12 +307,14 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=0.1, test_s
 print(X_train.shape, 'X train shape')
 print(y_train.shape, 'y train shape')
 
-gen_backend(backend='cpu', batch_size=100)
+gen_backend(backend='mkl', batch_size=100)
 
 #X_train.reshape((X_train.shape[0], 25 * 25 * 25))
 
 # setup datasets
-train_set = EnergyData(X=X_train, Y=y_train, lshape=(1,25,25,25))
+# train_set = EnergyData(X=X_train, Y=y_train, lshape=(1,25,25,25))
+from neon.data import ArrayIterator
+train_set = ArrayIterator(X=X_train, y=y_train, lshape=(1,25,25,25), make_onehot=False)
 
 # grab one iteration from the train_set
 iterator = train_set.__iter__()
@@ -306,11 +323,11 @@ print X  # this should be shape (N, 25,25, 25)
 print Y  # this should be shape (Y1,Y2) of shapes (1)(1)
 assert X.is_contiguous
 assert Y.is_contiguous
-
 train_set.reset()
 
 # generate test set
-valid_set =EnergyData(X=X_test, Y=y_test, lshape=(1,25,25,25))
+#valid_set =EnergyData(X=X_test, Y=y_test, lshape=(1,25,25,25))
+valid_set =ArrayIterator(X=X_test, y=y_test, lshape=(1,25,25,25), make_onehot=False)
 
 
 print 'train_set OK'
@@ -328,8 +345,7 @@ conv2 = dict(init=init, batch_norm=False, activation=lrelu, padding=2, bias=init
 conv3 = dict(init=init, batch_norm=False, activation=lrelu, padding=1, bias=init)
 b1 = BranchNode("b1")
 b2 = BranchNode("b2")
-branch1 = [   
-            b1,
+branch1 = [b1,
             Conv((5, 5, 5, 32), **conv1),
             Dropout(keep = 0.8),
             Conv((5, 5, 5, 8), **conv2),
@@ -351,9 +367,11 @@ branch1 = [
             ] #real/fake
 branch2 = [b2, 
            Affine(nout=1, init=init, bias=init, activation=lrelu)] #E primary
-branch3 = [b1,Linear(1, init=Constant(val=1.0))] #SUM ECAL
+branch3 = [b1,
+           Linear(1, init=Constant(val=1.0))] #SUM ECAL
 
 D_layers = Tree([branch1, branch2, branch3], name="Discriminator") #keep weight between branches equal to 1. for now (alphas=(1.,1.,1.) as by default )
+
 # generator using convolution layers
 init_gen = Gaussian(scale=0.001)
 relu = Rectlin(slope=0)  # relu for generator
@@ -385,6 +403,8 @@ G_layers = Tree([branchg], name="Generator")
 
 print D_layers
 print G_layers
+
+# G_layers and D_layers are now Tree containers and not Sequential!!
 layers = myGenerativeAdversarial(generator=G_layers, discriminator=D_layers)
                                #discriminator=Sequential(D_layers, name="Discriminator"))
 print 'layers defined'
@@ -397,12 +417,14 @@ optimizer = GradientDescentMomentum(learning_rate=1e-3, momentum_coef = 0.9)
 # setup cost function as Binary CrossEntropy
 #cost = GeneralizedGANCost(costfunc=GANCost(func="wasserstein"))
 #cost = GeneralizedGANCost(costfunc=Multicost[GANCost(func="wasserstein"), MeanSquared, MeanSquared])
-cost = Multicost(costs=[GeneralizedGANCost(costfunc=GANCost(func="wasserstein")), GeneralizedCost(costfunc=MeanSquared), GeneralizedCost(costfunc=MeanSquared)])
+cost = Multicost(costs=[GeneralizedGANCost(costfunc=GANCost(func="wasserstein")),
+                        GeneralizedCost(costfunc=MeanSquared),
+                        GeneralizedCost(costfunc=MeanSquared)])
 nb_epochs = 15
 latent_size = 200
 # initialize model
 noise_dim = (latent_size)
-gan = myGAN(layers=layers, noise_dim=noise_dim, dataset=train_set, k=5, wgan_param_clamp=0.9)
+gan = myGAN(layers=layers, noise_dim=noise_dim, dataset=train_set, k=1, wgan_param_clamp=0.9)
 # configure callbacks
 callbacks = Callbacks(gan, eval_set=valid_set)
 callbacks.add_callback(GANCostCallback())
