@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from neon.callbacks.callbacks import Callbacks, GANCostCallback
+from neon.callbacks.callbacks import Callbacks, GANCostCallback, TrainMulticostCallback
 #from neon.callbacks.plotting_callbacks import GANPlotCallback
 from neon.initializers import Gaussian, Constant
 from neon.layers import GeneralizedGANCost, Affine, Linear, Sequential, Conv, Deconv, Dropout, Pooling, BatchNorm, BranchNode, GeneralizedCost
@@ -211,7 +211,7 @@ class myGAN(Model):
             y_noise = y_noise_list[0] # getting the Real/Fake
             y_temp[:] = y_noise
             delta_noise = self.cost.costs[0].costfunc.bprop_noise(y_noise)
-            delta_nnn = self.bprop_dis((delta_noise,))
+            delta_nnn = self.bprop_dis([delta_noise])
             self.layers.discriminator.set_acc_on(True)
 
             # train discriminator on data: in this case the additional lines will be taken into account
@@ -220,10 +220,11 @@ class myGAN(Model):
             # the output lines are meaningful
             y_data_Ep = y_data_list[1]
             y_data_SUMEcal = y_data_list[2]
+            #pippo = self.cost.cost
             delta_data = self.cost.costs[0].costfunc.bprop_data(y_data)
-            delta_noise_Ep = self.cost.costs[1].costfunc.bprop(labels[0] ,y_data_Ep)
-            # delta_noise_SUMEcal = self.cost.costs[2].costfunc.bprop(y_data_SUMEcal)
-            delta_ddd = self.bprop_dis((delta_data,))
+            delta_noise_Ep = self.cost.costs[1].costfunc.bprop(labels[0, :], y_data_Ep)
+            delta_noise_SUMEcal = self.cost.costs[2].costfunc.bprop(labels[1, :], y_data_SUMEcal)
+            delta_ddd = self.bprop_dis([delta_data, delta_noise_Ep, delta_noise_SUMEcal])
             self.optimizer.optimize(self.layers.discriminator.layers_to_optimize, epoch=epoch)
             self.layers.discriminator.set_acc_on(False)
 
@@ -239,14 +240,16 @@ class myGAN(Model):
                 print(" ---> now training the generator {}-th time".format(self.gen_iter))
                 self.fill_noise_sampledE(z, normal=(self.noise_type == 'normal'))
                 Gz = self.fprop_gen(z)
-                y_noise_list = self.fprop_dis(Gz[0]) #y_noise = self.fprop_dis(Gz)
-                y_noise = y_noise_list[0]  # just getting the first cost for the moment
+                y_noise_list = self.fprop_dis(Gz[0])
+                y_noise = y_noise_list[0]  # just getting the WGAN cost
                 y_temp[:] = y_data
-                delta_noise = self.cost.costfunc.bprop_generator(y_noise)
-                delta_dis = self.bprop_dis((delta_noise,))
+                delta_noise = self.cost.costs[0].costfunc.bprop_generator(y_noise)
+                delta_dis = self.bprop_dis([delta_noise])
                 self.bprop_gen(delta_dis)
                 self.optimizer.optimize(self.layers.generator.layers_to_optimize, epoch=epoch)
                 # keep GAN cost values for the current minibatch
+                # self.cost_gen[:] = self.cost.costs[0].get_cost(y_data, y_noise, cost_type='gen')
+                #  add something like this with support in callbacks for generator cost displaying??
                 self.cost_dis[:] = self.cost.costs[0].get_cost(y_temp, y_noise, cost_type='dis')
                 # accumulate total cost.
                 self.total_cost[:] = self.total_cost + self.cost_dis
@@ -307,7 +310,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, train_size=0.1, test_s
 print(X_train.shape, 'X train shape')
 print(y_train.shape, 'y train shape')
 
-gen_backend(backend='mkl', batch_size=100)
+gen_backend(backend='mkl', batch_size=10)
 
 #X_train.reshape((X_train.shape[0], 25 * 25 * 25))
 
@@ -319,6 +322,7 @@ train_set = ArrayIterator(X=X_train, y=y_train, lshape=(1,25,25,25), make_onehot
 # grab one iteration from the train_set
 iterator = train_set.__iter__()
 (X, Y) = iterator.next()
+print("printing X and Y")
 print X  # this should be shape (N, 25,25, 25)
 print Y  # this should be shape (Y1,Y2) of shapes (1)(1)
 assert X.is_contiguous
@@ -328,7 +332,6 @@ train_set.reset()
 # generate test set
 #valid_set =EnergyData(X=X_test, Y=y_test, lshape=(1,25,25,25))
 valid_set =ArrayIterator(X=X_test, y=y_test, lshape=(1,25,25,25), make_onehot=False)
-
 
 print 'train_set OK'
 #tate=lt.plot(X_train[0, 12])
@@ -418,8 +421,8 @@ optimizer = GradientDescentMomentum(learning_rate=1e-3, momentum_coef = 0.9)
 #cost = GeneralizedGANCost(costfunc=GANCost(func="wasserstein"))
 #cost = GeneralizedGANCost(costfunc=Multicost[GANCost(func="wasserstein"), MeanSquared, MeanSquared])
 cost = Multicost(costs=[GeneralizedGANCost(costfunc=GANCost(func="wasserstein")),
-                        GeneralizedCost(costfunc=MeanSquared),
-                        GeneralizedCost(costfunc=MeanSquared)])
+                        GeneralizedCost(costfunc=MeanSquared()),
+                        GeneralizedCost(costfunc=MeanSquared())])
 nb_epochs = 15
 latent_size = 200
 # initialize model
@@ -427,7 +430,8 @@ noise_dim = (latent_size)
 gan = myGAN(layers=layers, noise_dim=noise_dim, dataset=train_set, k=1, wgan_param_clamp=0.9)
 # configure callbacks
 callbacks = Callbacks(gan, eval_set=valid_set)
-callbacks.add_callback(GANCostCallback())
+#callbacks.add_callback(GANCostCallback())
+callbacks.add_callback(TrainMulticostCallback())
 #callbacks.add_save_best_state_callback("./best_state.pkl")
 
 print 'starting training'

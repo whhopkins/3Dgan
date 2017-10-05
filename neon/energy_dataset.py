@@ -21,8 +21,6 @@ def temp_3Ddata():
    sumE = np.sum(aa, axis=(1)) 
    #labels=np.stack((np.array(dtag[:,1]),sumE),axis=1)
    labels = np.ones((xtr.shape[0], 2))
-   #xtr=xtr[...,numpy.newaxis]
-   #xtr=numpy.rollaxis(xtr,4,1)
    print labels.shape
    
    return aa.astype(np.float32), labels.astype(np.float32)
