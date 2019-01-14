@@ -81,6 +81,7 @@ def main():
     analysis=params.analyse # if analysing
     energies =params.energies # Bins
     resultfile = params.resultfile # analysis result
+    run_name = params.run_name
     if tlab:
        datapath = '/eos/project/d/dshep/LCD/V1/*scan/*.h5'
        weightsdir = '/gkhattak/weights/EnergyWeights/3dganWeights_k2'
@@ -92,7 +93,7 @@ def main():
     # Building discriminator and generator
     d=discriminator()
     g=generator(latent_size)
-    Gan3DTrain(d, g, datapath, nEvents, weightdir, pklfile, resultfile, mod=fitmod, nb_epochs=nb_epochs, batch_size=batch_size, latent_size =latent_size , loss_weights=lossweights, xscale = xscale, analysis=analysis, energies=energies, tf_flags=tf_flags)
+    Gan3DTrain(d, g, datapath, nEvents, weightdir, pklfile, resultfile, mod=fitmod, nb_epochs=nb_epochs, batch_size=batch_size, latent_size =latent_size , loss_weights=lossweights, xscale = xscale, analysis=analysis, energies=energies, tf_flags=tf_flags, run_name=run_name)
 
 def get_parser():
     parser = argparse.ArgumentParser(description='3D GAN Params' )
@@ -101,6 +102,7 @@ def get_parser():
     parser.add_argument('--latentsize', action='store', type=int, default=200, help='size of random N(0, 1) latent space to sample')
     parser.add_argument('--datapath', action='store', type=str, default='/bigdata/shared/LCD/NewV1/*scan/*.h5', help='HDF5 files to train from.') # Caltech
     parser.add_argument('--nbEvents', action='store', type=int, default=200000, help='Number of Data points to use')
+    parser.add_argument('--run_name', action='store', type=str, default="", help='Name for this run (optional). Can be used to distinguish runs in Tensorboard.')
     parser.add_argument('--verbose', action='store_true', default=False, help='Whether or not to use a progress bar')
     parser.add_argument('--tf_flags', action='store', default=False, help='Setting Tensorflow flags')
     parser.add_argument('--keras_format', action='store', type=str, default='channels_last', help='Keras format')
@@ -134,7 +136,7 @@ def GetprocData(datafile, xscale = 1, yscale = 100, limit = 1e-6):
     ecal = np.sum(X, axis=(1, 2, 3))
     return X, Y, ecal
 
-def Gan3DTrain(discriminator, generator, datapath, nEvents, WeightsDir, pklfile, resultfile, mod=0, nb_epochs=30, batch_size=128, latent_size=200, loss_weights=[2, 0.1, 0.1], lr=0.001, rho=0.9, decay=0.0, g_weights='params_generator_epoch_', d_weights='params_discriminator_epoch_', xscale=1, analysis=False, energies=[], tf_flags=False):
+def Gan3DTrain(discriminator, generator, datapath, nEvents, WeightsDir, pklfile, resultfile, mod=0, nb_epochs=30, batch_size=128, latent_size=200, loss_weights=[2, 0.1, 0.1], lr=0.001, rho=0.9, decay=0.0, g_weights='params_generator_epoch_', d_weights='params_discriminator_epoch_', xscale=1, analysis=False, energies=[], tf_flags=False, run_name=""):
     if tf_flags:
        tf.flags.DEFINE_string("d", "/data/svalleco/Ele_v1_1_2.h5", "data file")
        tf.flags.DEFINE_integer("bs", 128, "inference batch size")
@@ -184,6 +186,8 @@ def Gan3DTrain(discriminator, generator, datapath, nEvents, WeightsDir, pklfile,
     )
 
     log_path = './logs/' + time.strftime("%Y%m%d-%H%M%S")
+    if run_name:
+      log_path = log_path + "-" + run_name
     callback = TensorBoard(log_path)
     callback.set_model(combined)
 

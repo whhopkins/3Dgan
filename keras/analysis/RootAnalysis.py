@@ -52,8 +52,8 @@ def main():
    save_disc= params.save_disc
    read_disc= params.read_disc
    ifpdf= params.ifpdf
-   gweights= params.gweights
-   dweights= params.dweights
+   gweights= [params.gweights]
+   dweights= [params.dweights]
    xscales= params.xscales
    yscale= params.yscale
    energies= params.energies
