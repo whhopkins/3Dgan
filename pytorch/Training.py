@@ -1,39 +1,42 @@
-from HDF5torch import HDF5generator
+from loaders.HDF5torch import HDF5generator
 import numpy as np
 import glob
 import time
+import torch
+import torch.nn.functional as F
+#from torchsummary import summary
+from architectures.simple_dropout import CNNsimple
 
-class TwoLayerNet(torch.nn.Module):
-   def __init__(self, D_in, H, D_out):
-      """
-      In the constructor we instantiate two nn.Linear modules and assign them as
-      member variables.
-      """
-      super(TwoLayerNet, self).__init__()
-      self.linear1 = torch.nn.Linear(D_in, H)
-      self.linear2 = torch.nn.Linear(H, D_out)
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
 
-   def forward(self, x):
-      """
-      In the forward function we accept a Tensor of input data and we must return
-      a Tensor of output data. We can use Modules defined in the constructor as
-      well as arbitrary operators on Tensors.
-      """
-      h_relu = self.linear1(x).clamp(min=0)
-      y_pred = self.linear2(h_relu)
-
-      return y_pred
+def mape(pred, target):
+   loss = torch.mean(torch.abs(target-pred)/target)
+   return loss
 
 def training():
-   base_path = "/bigdata/shared/LCD/NewV1/" # fixed angle                                                                                         
-   particle =['Ele', 'Pi0'] # particle types                                                                                                      
+   model = CNNsimple()
+   model.cuda()
+   #summary(model, input_size=(1, 25, 25))
+   #criterion = torch.nn.L1Loss()
+   criterion = mape
+   optimizer = torch.optim.RMSprop(model.parameters(), lr=0.00001, alpha= 0.9)
+
+   base_path = "/bigdata/shared/LCD/NewV1/" # fixed angle
+   MODEL_STORE_PATH = "model/"
+   modelfile = 'conv_net_model_simple.ckpt' 
+   history = 'loss_history_simple.pkl'
+   particle =['Ele'] # particle types                                                                                                      
    sample_path = []
    for p in particle:
      sample_path.append(base_path + p + 'Escan/*.h5')
 
    batch_size = 128
    train_ratio = 0.9
-   shuffle=True
+   shuffle=False
+   num_epochs = 30
 
    n_classes = len(particle)
    # gather sample files for each type of particle                                                                                                
@@ -55,24 +58,44 @@ def training():
                train_files.append(new_files)
            else:
                test_files.append(new_files)
+   
    init = time.time()
-   # data generator for train files                                                                                                               
-   data_gen = HDF5generator(train_files[:3], batch_size=batch_size, shuffle=shuffle) #, num_events=5000)                                          
-   data_gen.particles=particle
-   print('Initialization in {} sec'.format(time.time()-init))
-   init = time.time()
-   for key in data_gen.data:
-       print(key, data_gen.data[key].shape)
-   for i, data in enumerate(data_gen):
-      print(i)
-      for key in data:
-        if key =='ECAL':
-            print(key, data[key].shape)
-        else:
-            print(key, data[key][:5])
-      print('{} batches took {} sec'.format(i, time.time()-init))
-   print('{} batches loaded in {} sec'.format(i, time.time()-init))
+   loss_list=[]
+   train_loss_list = []
+   test_loss_list = []
+   
+   for epoch in range(num_epochs):
+     # data generator for train files      
+     train_loader = HDF5generator(train_files, batch_size=batch_size, shuffle=shuffle, num_events=180000) 
+     total_batches = train_loader.total_batches
+     for i, data in enumerate(train_loader):
+       outputs = model(data['ECAL'])
+       loss = criterion(outputs, data['target']) 
+       loss_list.append(loss.item())
+       #loss = torch.autograd.Variable(loss, requires_grad=True) 
+       optimizer.zero_grad()
+       loss.backward()
+       optimizer.step()
+      
+       if (i + 1) % 100 == 0:
+         print('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}'.format(epoch + 1, num_epochs, i + 1, total_batches, loss.item()))
 
+     train_loss_list.append(np.mean(loss_list))
+     # Test the model
+     test_loader = HDF5generator(test_files, batch_size=batch_size, shuffle=shuffle, num_events=20000)
+     model.eval()
+     with torch.no_grad():
+       total = 0
+       loss_list=[]
+       for data in test_loader:
+         outputs = model(data['ECAL'])
+         loss = criterion(outputs, data['target'])
+         loss_list.append(loss.item())
+       test_loss_list.append(np.mean(loss_list))    
+     print('Test loss of the model on the 20000 test images: {} %'.format((loss.item())))
+     pickle.dump({'train': train_loss_list, 'test': test_loss_list}, open(MODEL_STORE_PATH + history, 'wb'))
+     # Save the model and plot
+     torch.save(model.state_dict(), MODEL_STORE_PATH + modelfile)
 
 if __name__ == "__main__":
     training()
