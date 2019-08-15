@@ -14,3 +14,5 @@ keras: 2.2.4
 tensorflow : 1.14.1
 
 Analysis scripts also uses Root and matplotlib
+
+## Installation of packages on 
