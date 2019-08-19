@@ -18,6 +18,7 @@ Analysis scripts also uses Root and matplotlib
 ## Installation of packages on dgx2
 
 1. Install a local copy of python3 on dxg (or whatever machine you plan on running on)
+
    a. Download python 3.6: wget https://www.python.org/ftp/python/3.6.8/Python-3.6.8.tgz
    b. Untar: tar zxvf Python-3.6.8.tgz; cd Python-3.6.8
    c. Make an installation directory: mkdir ~/opt0/
